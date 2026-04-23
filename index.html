@@ -3307,6 +3307,105 @@ function renderBriefingSlide(key) {
 }
 
 // ============================================================
+// LIVE — shared dashboard during the event.
+// Same page on the big screen and on every phone: giant timer, 4 atelier
+// cards with the currently-present group, QR for late joiners. During the
+// 5-min transition we display the NEXT rotation so groups see where to head.
+// (Personal banner + group picker are added in step 7b.)
+// ============================================================
+function renderLive() {
+  const remaining = getTimerRemaining();
+
+  const phaseLabel =
+    state.phase === 'epreuve'    ? 'Atelier en cours' :
+    state.phase === 'transition' ? 'On change d\'atelier' :
+    state.currentRotation === 0           ? 'Avant le lancement' :
+    state.currentRotation > N_ROTATIONS   ? 'C\'est terminé' :
+                                            'En pause';
+  const phaseClass =
+    state.phase === 'epreuve'    ? 'active-epreuve' :
+    state.phase === 'transition' ? 'active-transition' : '';
+
+  const kickerText =
+    state.currentRotation === 0         ? 'Un instant, l\'instant arrive' :
+    state.currentRotation > N_ROTATIONS ? 'Merci d\'avoir été là' :
+    `Rotation ${Math.min(state.currentRotation, N_ROTATIONS)} sur ${N_ROTATIONS}`;
+
+  // During transition, show who's heading to each atelier (the upcoming rotation).
+  const displayedRotation = (state.phase === 'transition' && state.currentRotation < N_ROTATIONS)
+    ? state.currentRotation + 1
+    : state.currentRotation;
+  const assignments = getAssignmentsForRotation(displayedRotation);
+  const presentLabel = state.phase === 'transition' ? 'Accueille bientôt' : 'Groupe présent';
+
+  const currentUrl = window.location.origin + window.location.pathname;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(currentUrl)}`;
+
+  const rotationDots = [];
+  for (let i = 1; i <= N_ROTATIONS; i++) {
+    const cls = i < state.currentRotation ? 'done' :
+                i === state.currentRotation ? 'current' : '';
+    rotationDots.push(`<div class="rotation-dot ${cls}">${i}</div>`);
+    if (i < N_ROTATIONS) rotationDots.push(`<div class="rotation-line"></div>`);
+  }
+
+  return `
+    <div class="screen fade-in">
+      <div class="screen-header">
+        <div class="screen-title-block">
+          <div class="kicker">${escapeHtml(kickerText)}</div>
+          <h1>Un instant<br/><em>de vérité</em></h1>
+        </div>
+        <div class="timer-block">
+          <div class="timer-phase ${phaseClass}">${phaseLabel}</div>
+          <div class="timer-display ${state.timerPaused ? 'paused' : ''}" data-timer>${formatTime(remaining)}</div>
+        </div>
+      </div>
+
+      <div class="rotation-indicator">${rotationDots.join('')}</div>
+
+      <div class="ateliers-grid">
+        ${ATELIERS.map(a => {
+          const gId = assignments[a.key];
+          const g = (gId !== undefined && gId !== null) ? state.config.groups[gId] : null;
+          const hasGroup = !!g;
+          return `
+            <div class="atelier-card ${hasGroup ? 'highlight' : ''}">
+              <div class="atelier-header">
+                <div class="atelier-letter">${a.key}</div>
+                <div class="atelier-name">${escapeHtml(a.name)}</div>
+              </div>
+              <div class="atelier-teams-label" style="margin-top:4px">Lieu</div>
+              <div class="atelier-teams" style="font-family:var(--font-display);font-style:italic;font-weight:500">
+                ${escapeHtml(a.location)}
+              </div>
+              <div class="atelier-teams-label" style="margin-top:14px">${presentLabel}</div>
+              <div class="${hasGroup ? 'atelier-teams' : 'atelier-teams-empty'}">
+                ${hasGroup ? escapeHtml(groupDisplayName(g)) : '—'}
+              </div>
+              <div class="atelier-teams-label" style="margin-top:14px">Avec</div>
+              <div class="atelier-teams" style="font-weight:400">
+                ${escapeHtml(a.responsible)}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div class="screen-footer">
+        <div class="screen-footer-text">
+          <div class="kicker">Scannez pour suivre en direct</div>
+          <div class="url">${escapeHtml(currentUrl)}</div>
+        </div>
+        <div class="qr-box">
+          <img src="${qrUrl}" alt="QR Code" />
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================
 // UTIL (html escaping) — placed here so render functions can use it.
 // ============================================================
 function escapeHtml(s) {
