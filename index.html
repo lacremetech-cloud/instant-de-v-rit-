@@ -2250,12 +2250,13 @@
     line-height: 1.5;
   }
 
-  /* Slide 3: Les 5 épreuves detailed */
+  /* Slide 3: Les 4 ateliers (2x2) */
   .brief-epreuves {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 16px;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
     margin-top: 24px;
+    max-width: 1000px;
   }
   .brief-epreuve {
     background: var(--card);
@@ -2534,7 +2535,26 @@
   @media (max-width: 500px) {
     .role-bar button { padding: 5px 9px; font-size: 10px; }
     .rotation-dot { width: 34px; height: 34px; font-size: 13px; }
-    .admin-rot-buttons { grid-template-columns: repeat(3, 1fr); }
+    .admin-rot-buttons { grid-template-columns: repeat(4, 1fr); }
+  }
+
+  /* Personal strip on Live — stack the two columns on narrow screens */
+  @media (max-width: 640px) {
+    [data-personal-grid] {
+      grid-template-columns: 1fr !important;
+      gap: 14px !important;
+    }
+    [data-personal-grid] > div + div {
+      border-left: none !important;
+      padding-left: 0 !important;
+      border-top: 1px solid rgba(251,249,244,0.18);
+      padding-top: 12px;
+    }
+  }
+  @media (max-width: 540px) {
+    [data-picker-grid] {
+      grid-template-columns: 1fr 1fr !important;
+    }
   }
 </style>
 <script src="config.js"></script>
@@ -3110,7 +3130,7 @@ function renderBriefingSlide(key) {
           Chaque groupe visite tous les ateliers, l'un après l'autre,
           avec une facilitatrice dédiée.
         </p>
-        <div class="brief-epreuves" style="grid-template-columns: 1fr 1fr; gap: 20px">
+        <div class="brief-epreuves">
           ${ATELIERS.map(a => `
             <div class="brief-epreuve">
               <div class="brief-epreuve-letter">${a.key}</div>
@@ -3325,7 +3345,7 @@ function renderLivePersonalStrip(myGroup) {
                     margin:4px 0 16px;font-weight:400;letter-spacing:-0.01em">
           Vous êtes dans quel groupe&nbsp;?
         </div>
-        <div style="display:grid;grid-template-columns:repeat(${N_GROUPS},minmax(0,1fr));
+        <div data-picker-grid style="display:grid;grid-template-columns:repeat(${N_GROUPS},minmax(0,1fr));
                     gap:10px;position:relative">
           ${state.config.groups.map(g => `
             <button data-pick-group="${g.id}"
@@ -3349,10 +3369,15 @@ function renderLivePersonalStrip(myGroup) {
 
   // Case 2 — group picked: render the personal banner.
   const g = state.config.groups[myGroup];
-  const cur = (state.currentRotation >= 1 && state.currentRotation <= N_ROTATIONS)
-    ? getGroupAtelierForRotation(myGroup, state.currentRotation) : null;
-  const nxt = (state.currentRotation + 1 >= 1 && state.currentRotation + 1 <= N_ROTATIONS)
-    ? getGroupAtelierForRotation(myGroup, state.currentRotation + 1) : null;
+  // During transition, the group is heading to the next rotation's atelier; show
+  // that as "Direction" (current focus), and rotation after as "Ensuite".
+  const focusRotation = (state.phase === 'transition' && state.currentRotation < N_ROTATIONS)
+    ? state.currentRotation + 1
+    : state.currentRotation;
+  const cur = (focusRotation >= 1 && focusRotation <= N_ROTATIONS)
+    ? getGroupAtelierForRotation(myGroup, focusRotation) : null;
+  const nxt = (focusRotation + 1 >= 1 && focusRotation + 1 <= N_ROTATIONS)
+    ? getGroupAtelierForRotation(myGroup, focusRotation + 1) : null;
 
   const changeBtn = `
     <button data-change-group aria-label="Changer de groupe"
@@ -3400,7 +3425,7 @@ function renderLivePersonalStrip(myGroup) {
       <div class="kicker" style="position:relative">
         ${escapeHtml(groupDisplayName(g))} · Rotation ${state.currentRotation} sur ${N_ROTATIONS}
       </div>
-      <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:28px;align-items:start;
+      <div data-personal-grid style="display:grid;grid-template-columns:1.3fr 1fr;gap:28px;align-items:start;
                   position:relative;margin-top:10px">
         <div>
           <div class="atelier-teams-label" style="color:rgba(251,249,244,0.55);margin-bottom:2px">${curLabel}</div>
