@@ -2585,7 +2585,6 @@ const N_ROTATIONS = 4;
 const EPREUVE_DURATION = 35 * 60;       // 35 min
 const TRANSITION_DURATION = 5 * 60;     // 5 min
 const ADMIN_CODE = 'ADMIN2026';
-const RESP_CODE = 'INSTANT2026';
 
 // Rotation schedule: each group visits each atelier exactly once.
 // SCHEDULE[rotationIdx][atelierIdx] = groupId
@@ -2610,10 +2609,8 @@ const DEFAULT_CONFIG = {
   groups: Array.from({length: N_GROUPS}, (_, i) => ({
     id: i,
     name: `Groupe ${i + 1}`,
-    captain: '',
-    code: String(1000 + i * 111).slice(-4)  // 1000, 1111, 1222, 1333
-  })),
-  ateliers: ATELIERS.map(a => ({...a}))
+    captain: ''
+  }))
 };
 
 function groupDisplayName(g) {
@@ -2730,39 +2727,45 @@ if (_supabase) {
 }
 
 // ============================================================
-// ROUTING (hash-based: #/screen, #/live, #/cap, #/resp, #/admin)
+// ROUTING (hash-based: #/screen, #/live, #/admin)
 // ============================================================
 function getRoute() {
   const h = window.location.hash.slice(1) || '/';
   if (h === '/' || h === '') return 'home';
   if (h.startsWith('/screen')) return 'screen';
   if (h.startsWith('/live'))   return 'live';
-  if (h.startsWith('/cap'))    return 'cap';
-  if (h.startsWith('/resp'))   return 'resp';
   if (h.startsWith('/admin'))  return 'admin';
   return 'home';
 }
 window.addEventListener('hashchange', () => { if (typeof render === 'function') render(); });
 
-// Local session (which group / atelier is this device "bound to")
-const SESSION_KEY_CAP   = 'instant:session:cap';
-const SESSION_KEY_RESP  = 'instant:session:resp';
+// Local preferences on this device.
+//   - myGroup (persistent): which group is the user following? (localStorage)
+//   - admin session (ephemeral): is the admin unlocked on this device? (sessionStorage)
+const MY_GROUP_KEY      = 'instant:myGroup';
 const SESSION_KEY_ADMIN = 'instant:session:admin';
 
-function getSessionCap()   { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_CAP)   || 'null'); } catch { return null; } }
-function setSessionCap(v)  { sessionStorage.setItem(SESSION_KEY_CAP,   JSON.stringify(v)); }
-function getSessionResp()  { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_RESP)  || 'null'); } catch { return null; } }
-function setSessionResp(v) { sessionStorage.setItem(SESSION_KEY_RESP,  JSON.stringify(v)); }
+function getMyGroup() {
+  try {
+    const v = localStorage.getItem(MY_GROUP_KEY);
+    if (v === null) return null;
+    const n = parseInt(v, 10);
+    return (n >= 0 && n < N_GROUPS) ? n : null;
+  } catch { return null; }
+}
+function setMyGroup(groupId) {
+  try {
+    if (groupId === null) localStorage.removeItem(MY_GROUP_KEY);
+    else localStorage.setItem(MY_GROUP_KEY, String(groupId));
+  } catch {}
+}
+
 function getSessionAdmin() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_ADMIN) || 'null'); } catch { return null; } }
-function setSessionAdmin(v){ sessionStorage.setItem(SESSION_KEY_ADMIN, JSON.stringify(v)); }
+function setSessionAdmin(v){ try { sessionStorage.setItem(SESSION_KEY_ADMIN, JSON.stringify(v)); } catch {} }
 
 // Fallback to in-memory if sessionStorage is blocked (sandboxed iframes etc.)
-let _sessCap = null, _sessResp = null, _sessAdmin = null;
+let _sessAdmin = null;
 try { sessionStorage.getItem('test'); } catch {
-  window.getSessionCap   = () => _sessCap;
-  window.setSessionCap   = (v) => { _sessCap = v; };
-  window.getSessionResp  = () => _sessResp;
-  window.setSessionResp  = (v) => { _sessResp = v; };
   window.getSessionAdmin = () => _sessAdmin;
   window.setSessionAdmin = (v) => { _sessAdmin = v; };
 }
@@ -2860,7 +2863,7 @@ setInterval(() => {
     if (typeof render === 'function') render();
   }
 
-  if (['screen', 'cap', 'admin', 'live', 'resp'].includes(route)) {
+  if (['screen', 'live', 'admin'].includes(route)) {
     updateTimerDisplays();
   }
 }, 1000);
@@ -2934,34 +2937,46 @@ function render() {
   let content = '';
   if (route === 'home')        content = renderHome();
   else if (route === 'screen') content = renderBriefing();
-  else if (route === 'live')   content = renderLive ? renderLive() : '';
-  else if (route === 'cap')    content = renderCap  ? renderCap()  : '';
-  else if (route === 'resp')   content = renderResp ? renderResp() : '';
-  else if (route === 'admin')  content = renderAdmin? renderAdmin(): '';
+  else if (route === 'live')   content = typeof renderLive  === 'function' ? renderLive()  : '';
+  else if (route === 'admin')  content = typeof renderAdmin === 'function' ? renderAdmin() : '';
 
   root.innerHTML = (route === 'home' ? '' : renderRoleBar(route)) + content;
   if (typeof attachEventHandlers === 'function') attachEventHandlers(route);
 }
 
 function renderHome() {
-  const roles = [
-    { hash: '#/cap',    icon: '★', label: 'Capitaine',   desc: "Suivre le parcours de ton groupe" },
-    { hash: '#/resp',   icon: '⏱', label: 'Responsable', desc: "Animer ton atelier, suivre le chrono" },
-    { hash: '#/live',   icon: '◉', label: 'Live',        desc: "Voir le déroulé en direct" },
-    { hash: '#/screen', icon: '◐', label: 'Projection',  desc: "Écran du briefing d'accueil" },
-    { hash: '#/admin',  icon: '⚙', label: 'Admin',       desc: "Piloter le déroulement" },
+  const secondary = [
+    { hash: '#/screen', label: 'Projection', desc: "Écran d'accueil & briefing" },
+    { hash: '#/admin',  label: 'Admin',      desc: "Piloter le chrono" },
   ];
   return `
     <div class="home-page fade-in">
       <div class="home-header">
         <div class="home-logo" style="font-style:italic">v</div>
         <h1 class="home-title">Un instant de vérité</h1>
-        <p class="home-subtitle">Choisissez votre rôle pour commencer</p>
+        <p class="home-subtitle">Suivez votre parcours en direct</p>
       </div>
-      <div class="home-grid">
-        ${roles.map(r => `
+
+      <button
+        onclick="location.hash='#/live'"
+        style="font-family:var(--font-display);font-size:clamp(28px,4.5vw,44px);font-style:italic;
+               background:var(--accent);color:var(--card);border:none;border-radius:24px;
+               padding:32px 48px 28px;cursor:pointer;box-shadow:var(--shadow-lg);
+               transition:transform 0.2s, box-shadow 0.2s;
+               display:flex;flex-direction:column;gap:6px;align-items:center;
+               min-width:280px;letter-spacing:-0.01em"
+        onmouseover="this.style.transform='translateY(-3px)'"
+        onmouseout="this.style.transform='translateY(0)'">
+        Je suis où&nbsp;?
+        <span style="font-family:var(--font-body);font-size:11px;letter-spacing:0.3em;
+                     text-transform:uppercase;color:var(--terracotta);font-style:normal;font-weight:500">
+          Suivre en direct
+        </span>
+      </button>
+
+      <div class="home-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 220px));max-width:480px">
+        ${secondary.map(r => `
           <button class="home-card" onclick="location.hash='${r.hash}'">
-            <span class="home-card-icon">${r.icon}</span>
             <span class="home-card-label">${r.label}</span>
             <span class="home-card-desc">${r.desc}</span>
           </button>
@@ -2973,11 +2988,9 @@ function renderHome() {
 
 function renderRoleBar(route) {
   const roles = [
-    { k: 'screen', label: 'Projection',  hash: '#/screen' },
-    { k: 'live',   label: 'Live',        hash: '#/live' },
-    { k: 'cap',    label: 'Capitaine',   hash: '#/cap' },
-    { k: 'resp',   label: 'Responsable', hash: '#/resp' },
-    { k: 'admin',  label: 'Admin',       hash: '#/admin' },
+    { k: 'live',   label: 'Live',       hash: '#/live' },
+    { k: 'screen', label: 'Projection', hash: '#/screen' },
+    { k: 'admin',  label: 'Admin',      hash: '#/admin' },
   ];
   return `
     <div class="role-bar">
@@ -3225,8 +3238,13 @@ function renderBriefingSlide(key) {
   if (key === 'webapp') {
     return `
       <div class="brief-slide">
-        <div class="brief-kicker">Accès à l'application</div>
+        <div class="brief-kicker">Suivez en direct</div>
         <h1 class="brief-title">Scannez pour <em>rejoindre</em></h1>
+        <p class="brief-lead">
+          Pas de mot de passe, pas de compte. Vous scannez, vous choisissez
+          votre groupe, et vous voyez en temps réel où vous êtes, où vous allez,
+          et combien de temps il reste.
+        </p>
         <div class="brief-webapp">
           <div class="brief-webapp-qr-block">
             <div class="brief-webapp-qr">
@@ -3236,32 +3254,29 @@ function renderBriefingSlide(key) {
           </div>
           <div class="brief-webapp-roles">
             <div class="brief-webapp-role">
-              <div class="brief-webapp-role-letter">C</div>
+              <div class="brief-webapp-role-letter" style="font-style:normal">1</div>
               <div class="brief-webapp-role-content">
-                <div class="brief-webapp-role-title">Capitaines</div>
+                <div class="brief-webapp-role-title">Scannez le QR</div>
                 <div class="brief-webapp-role-desc">
-                  Atelier en cours, prochain lieu, chrono, responsable — tout sous les yeux.
-                  Scannez le QR, entrez votre code, onglet Capitaine.
+                  Depuis votre téléphone, visez le code ci-contre.
                 </div>
               </div>
             </div>
             <div class="brief-webapp-role">
-              <div class="brief-webapp-role-letter">R</div>
+              <div class="brief-webapp-role-letter" style="font-style:normal">2</div>
               <div class="brief-webapp-role-content">
-                <div class="brief-webapp-role-title">Responsables d'atelier</div>
+                <div class="brief-webapp-role-title">Choisissez votre groupe</div>
                 <div class="brief-webapp-role-desc">
-                  Le chrono, le groupe en cours, le groupe suivant. Tout ce qu'il vous faut
-                  pour animer sereinement. Scannez le QR, entrez le code organisatrice,
-                  onglet Responsable.
+                  Le prénom de votre capitaine vous aide à vous reconnaître.
                 </div>
               </div>
             </div>
             <div class="brief-webapp-role">
-              <div class="brief-webapp-role-letter">P</div>
+              <div class="brief-webapp-role-letter" style="font-style:normal">3</div>
               <div class="brief-webapp-role-content">
-                <div class="brief-webapp-role-title">Participantes</div>
+                <div class="brief-webapp-role-title">Suivez votre parcours</div>
                 <div class="brief-webapp-role-desc">
-                  Suivez le déroulé en direct sur l'onglet Live.
+                  Atelier en cours, prochain lieu, chrono — tout est sous les yeux.
                 </div>
               </div>
             </div>
@@ -3336,6 +3351,27 @@ function attachEventHandlers(route) {
       await saveStatePatch({ participantCount: state.participantCount });
     };
   }
+
+  // "Réinitialiser" on the groups slide — wipes participant count + all captain names
+  document.querySelectorAll('[data-action="reset-groups"]').forEach(btn => {
+    btn.onclick = async () => {
+      if (typeof showConfirm === 'function') {
+        const ok = await showConfirm(
+          'Réinitialiser',
+          'Le nombre de participantes et tous les prénoms des capitaines vont être effacés. Continuer ?',
+          { danger: true, confirmLabel: 'Effacer' }
+        );
+        if (!ok) return;
+      } else if (!confirm('Effacer le nombre de participantes et tous les prénoms des capitaines ?')) {
+        return;
+      }
+      state.participantCount = null;
+      state.config.groups.forEach(g => { g.captain = ''; });
+      await saveStatePatch({ participantCount: null, config: state.config });
+      render();
+      if (typeof showToast === 'function') showToast('Groupes réinitialisés');
+    };
+  });
 
   // Captain name inputs (save on blur / Enter)
   document.querySelectorAll('[data-captain-idx]').forEach(inp => {
