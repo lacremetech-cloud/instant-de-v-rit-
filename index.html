@@ -2156,7 +2156,7 @@
     color: var(--muted);
     letter-spacing: 0.05em;
   }
-  .brief-captain-num::before { content: 'Équipe '; }
+  .brief-captain-num::before { content: 'Groupe '; }
   .brief-captain-input {
     background: transparent;
     border: none;
@@ -2925,8 +2925,454 @@ function getGroupAtelierForRotation(groupId, rotationNum) {
 }
 
 // ============================================================
-// NEXT STEPS (render, handlers, init) will be appended below.
+// RENDER — router + home + role bar + projection (briefing slides)
 // ============================================================
+const root = document.getElementById('app');
+
+function render() {
+  const route = getRoute();
+  let content = '';
+  if (route === 'home')        content = renderHome();
+  else if (route === 'screen') content = renderBriefing();
+  else if (route === 'live')   content = renderLive ? renderLive() : '';
+  else if (route === 'cap')    content = renderCap  ? renderCap()  : '';
+  else if (route === 'resp')   content = renderResp ? renderResp() : '';
+  else if (route === 'admin')  content = renderAdmin? renderAdmin(): '';
+
+  root.innerHTML = (route === 'home' ? '' : renderRoleBar(route)) + content;
+  if (typeof attachEventHandlers === 'function') attachEventHandlers(route);
+}
+
+function renderHome() {
+  const roles = [
+    { hash: '#/cap',    icon: '★', label: 'Capitaine',   desc: "Suivre le parcours de ton groupe" },
+    { hash: '#/resp',   icon: '⏱', label: 'Responsable', desc: "Animer ton atelier, suivre le chrono" },
+    { hash: '#/live',   icon: '◉', label: 'Live',        desc: "Voir le déroulé en direct" },
+    { hash: '#/screen', icon: '◐', label: 'Projection',  desc: "Écran du briefing d'accueil" },
+    { hash: '#/admin',  icon: '⚙', label: 'Admin',       desc: "Piloter le déroulement" },
+  ];
+  return `
+    <div class="home-page fade-in">
+      <div class="home-header">
+        <div class="home-logo" style="font-style:italic">v</div>
+        <h1 class="home-title">Un instant de vérité</h1>
+        <p class="home-subtitle">Choisissez votre rôle pour commencer</p>
+      </div>
+      <div class="home-grid">
+        ${roles.map(r => `
+          <button class="home-card" onclick="location.hash='${r.hash}'">
+            <span class="home-card-icon">${r.icon}</span>
+            <span class="home-card-label">${r.label}</span>
+            <span class="home-card-desc">${r.desc}</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderRoleBar(route) {
+  const roles = [
+    { k: 'screen', label: 'Projection',  hash: '#/screen' },
+    { k: 'live',   label: 'Live',        hash: '#/live' },
+    { k: 'cap',    label: 'Capitaine',   hash: '#/cap' },
+    { k: 'resp',   label: 'Responsable', hash: '#/resp' },
+    { k: 'admin',  label: 'Admin',       hash: '#/admin' },
+  ];
+  return `
+    <div class="role-bar">
+      ${roles.map(r => `
+        <button class="${route === r.k ? 'active' : ''}" onclick="location.hash='${r.hash}'">
+          ${r.label}
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+// ============================================================
+// PROJECTION — briefing carousel (welcome → go)
+// ============================================================
+function renderParticipantsCalcResult(count) {
+  if (!count || count < N_GROUPS) {
+    return `
+      <div class="brief-teams-calc-empty">
+        <div class="brief-teams-calc-empty-label">En attente</div>
+        <div class="brief-teams-calc-empty-hint">Saisissez le nombre pour voir la répartition</div>
+      </div>
+    `;
+  }
+  const perGroup   = Math.floor(count / N_GROUPS);
+  const remainder  = count % N_GROUPS;
+  let repartition;
+  if (remainder === 0) {
+    repartition = `<strong>${perGroup}</strong> participantes par groupe`;
+  } else {
+    repartition = `${remainder} groupe${remainder > 1 ? 's' : ''} de <strong>${perGroup + 1}</strong>, ${N_GROUPS - remainder} groupe${(N_GROUPS - remainder) > 1 ? 's' : ''} de <strong>${perGroup}</strong>`;
+  }
+  return `
+    <div class="brief-teams-calc-result-num">${count}</div>
+    <div class="brief-teams-calc-result-eq">÷ ${N_GROUPS} groupes</div>
+    <div class="brief-teams-calc-result-text">${repartition}</div>
+  `;
+}
+
+let briefingSlide = 0;
+const BRIEFING_SLIDES = ['welcome', 'objectif', 'ateliers', 'atelier', 'groups', 'webapp', 'go'];
+
+function renderBriefing() {
+  const key      = BRIEFING_SLIDES[briefingSlide];
+  const isFirst  = briefingSlide === 0;
+  const isLast   = briefingSlide === BRIEFING_SLIDES.length - 1;
+  const slide    = renderBriefingSlide(key);
+  return `
+    <div class="brief fade-in">
+      ${slide}
+      <div class="brief-nav">
+        <button class="brief-nav-btn" data-brief-action="prev" ${isFirst ? 'disabled' : ''} aria-label="Précédent">‹</button>
+        <div class="brief-nav-dots">
+          ${BRIEFING_SLIDES.map((_, i) => `
+            <button class="brief-nav-dot ${i === briefingSlide ? 'active' : ''}" data-brief-go="${i}" aria-label="Slide ${i+1}"></button>
+          `).join('')}
+        </div>
+        <button class="brief-nav-btn" data-brief-action="next" ${isLast ? 'disabled' : ''} aria-label="Suivant">›</button>
+        <button class="brief-nav-live" data-brief-action="live">Passer en direct →</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderBriefingSlide(key) {
+  const currentUrl = window.location.origin + window.location.pathname;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=0&data=${encodeURIComponent(currentUrl)}`;
+
+  if (key === 'welcome') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-welcome-centered">
+          <div class="landing-ornament" style="margin-bottom: 40px"></div>
+          <h1 class="brief-welcome-title">Un instant<br/><em>de vérité</em></h1>
+          <p class="brief-welcome-sub">
+            Un moment pour se rencontrer, se poser, et choisir qui on veut être.
+          </p>
+        </div>
+      </div>
+    `;
+  }
+
+  if (key === 'objectif') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-kicker">L'objectif</div>
+        <h1 class="brief-title">Faire le tour de soi-même.<br/><em>Choisir qui on veut être.</em></h1>
+        <p class="brief-lead">
+          Quatre ateliers pour questionner ses certitudes, écouter son cœur,
+          entendre les histoires qui inspirent, et mettre des mots sur ce qui compte.
+        </p>
+        <div class="brief-stats brief-stats-3">
+          <div class="brief-stat">
+            <div class="brief-stat-num">4</div>
+            <div class="brief-stat-label">Ateliers d'introspection</div>
+          </div>
+          <div class="brief-stat">
+            <div class="brief-stat-num">4</div>
+            <div class="brief-stat-label">Groupes</div>
+          </div>
+          <div class="brief-stat">
+            <div class="brief-stat-num"><em>2h40</em></div>
+            <div class="brief-stat-label">Ensemble</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (key === 'ateliers') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-kicker">Les quatre ateliers</div>
+        <h1 class="brief-title">Quatre espaces.<br/><em>Quatre rencontres.</em></h1>
+        <p class="brief-lead">
+          Chaque groupe visite tous les ateliers, l'un après l'autre,
+          avec une facilitatrice dédiée.
+        </p>
+        <div class="brief-epreuves" style="grid-template-columns: 1fr 1fr; gap: 20px">
+          ${ATELIERS.map(a => `
+            <div class="brief-epreuve">
+              <div class="brief-epreuve-letter">${a.key}</div>
+              <div class="brief-epreuve-name">${escapeHtml(a.name)}</div>
+              <div class="brief-epreuve-desc">${escapeHtml(a.desc)}</div>
+              <div class="brief-epreuve-pts">Avec ${escapeHtml(a.responsible)}</div>
+              <div class="brief-epreuve-resp">→ ${escapeHtml(a.location)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (key === 'atelier') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-kicker">Comment se déroule un atelier</div>
+        <h1 class="brief-title">Un groupe.<br/>Trente-cinq minutes.<br/><em>Un espace d'écoute.</em></h1>
+        <p class="brief-lead">
+          Chaque atelier accueille un seul groupe à la fois.
+          Le temps est calibré pour que chacune ait la place de parler et d'écouter.
+        </p>
+        <div class="brief-atelier-grid">
+          <div class="brief-atelier-step">
+            <div class="brief-atelier-step-num">1</div>
+            <div class="brief-atelier-step-title">Votre groupe arrive</div>
+            <div class="brief-atelier-step-desc">
+              La capitaine guide le groupe jusqu'au lieu de l'atelier.
+              La facilitatrice vous accueille.
+            </div>
+          </div>
+          <div class="brief-atelier-step">
+            <div class="brief-atelier-step-num">2</div>
+            <div class="brief-atelier-step-title">Trente-cinq minutes</div>
+            <div class="brief-atelier-step-desc">
+              Le temps de l'écoute. Pas de téléphone, pas de distraction —
+              seulement ce qui émerge.
+            </div>
+          </div>
+          <div class="brief-atelier-step">
+            <div class="brief-atelier-step-num">3</div>
+            <div class="brief-atelier-step-title">Cinq minutes pour rejoindre le suivant</div>
+            <div class="brief-atelier-step-desc">
+              On se déplace sans se presser. L'écran live indique votre prochain lieu.
+            </div>
+          </div>
+        </div>
+        <div class="brief-atelier-footer">
+          <div class="brief-atelier-footer-item">
+            <div class="brief-atelier-footer-label">Durée d'un atelier</div>
+            <div class="brief-atelier-footer-value">35</div>
+          </div>
+          <div class="brief-atelier-footer-item">
+            <div class="brief-atelier-footer-label">Transition</div>
+            <div class="brief-atelier-footer-value">5</div>
+          </div>
+          <div class="brief-atelier-footer-item">
+            <div class="brief-atelier-footer-label">Durée totale</div>
+            <div class="brief-atelier-footer-value"><em>2h40</em></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (key === 'groups') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-kicker">Constitution des groupes</div>
+        <h1 class="brief-title">Quatre groupes, <em>à parts égales</em></h1>
+        <p class="brief-lead">
+          Répartissez les participantes en quatre groupes à parts égales.
+          Chaque groupe désigne sa capitaine — c'est elle qui guide le groupe
+          d'atelier en atelier.
+        </p>
+
+        <div class="brief-teams-calc">
+          <div class="brief-teams-calc-left">
+            <div class="brief-teams-calc-label">Nombre de participantes présentes</div>
+            <input
+              type="number"
+              id="teams-calc-input"
+              class="brief-teams-calc-input"
+              min="${N_GROUPS}"
+              max="500"
+              placeholder="—"
+              value="${state.participantCount || ''}"
+            />
+            <div class="brief-teams-calc-hint">Entrez le nombre exact ce matin</div>
+          </div>
+          <div class="brief-teams-calc-arrow">→</div>
+          <div class="brief-teams-calc-right" id="teams-calc-result">
+            ${renderParticipantsCalcResult(state.participantCount)}
+          </div>
+        </div>
+
+        <div class="brief-captains-section">
+          <div class="brief-captains-header">
+            <div>
+              <div class="brief-captains-title">Noms des capitaines</div>
+              <div class="brief-captains-hint">À mesure que les groupes se forment, saisissez le prénom de chaque capitaine</div>
+            </div>
+            <button class="admin-btn danger" data-action="reset-groups" style="flex-shrink:0;font-size:12px;padding:6px 14px">Réinitialiser</button>
+          </div>
+          <div class="brief-captains-grid" style="grid-template-columns: repeat(${N_GROUPS}, 1fr)">
+            ${state.config.groups.map((g, i) => `
+              <div class="brief-captain-card ${g.captain ? 'filled' : ''}">
+                <div class="brief-captain-num">${i + 1}</div>
+                <input
+                  type="text"
+                  class="brief-captain-input"
+                  data-captain-idx="${i}"
+                  value="${escapeAttr(g.captain || '')}"
+                  placeholder="Prénom de la capitaine"
+                  autocomplete="off"
+                />
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (key === 'webapp') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-kicker">Accès à l'application</div>
+        <h1 class="brief-title">Scannez pour <em>rejoindre</em></h1>
+        <div class="brief-webapp">
+          <div class="brief-webapp-qr-block">
+            <div class="brief-webapp-qr">
+              <img src="${qrUrl}" alt="QR Code" />
+            </div>
+            <div class="brief-webapp-qr-label">${currentUrl}</div>
+          </div>
+          <div class="brief-webapp-roles">
+            <div class="brief-webapp-role">
+              <div class="brief-webapp-role-letter">C</div>
+              <div class="brief-webapp-role-content">
+                <div class="brief-webapp-role-title">Capitaines</div>
+                <div class="brief-webapp-role-desc">
+                  Atelier en cours, prochain lieu, chrono, responsable — tout sous les yeux.
+                  Scannez le QR, entrez votre code, onglet Capitaine.
+                </div>
+              </div>
+            </div>
+            <div class="brief-webapp-role">
+              <div class="brief-webapp-role-letter">R</div>
+              <div class="brief-webapp-role-content">
+                <div class="brief-webapp-role-title">Responsables d'atelier</div>
+                <div class="brief-webapp-role-desc">
+                  Le chrono, le groupe en cours, le groupe suivant. Tout ce qu'il vous faut
+                  pour animer sereinement. Scannez le QR, entrez le code organisatrice,
+                  onglet Responsable.
+                </div>
+              </div>
+            </div>
+            <div class="brief-webapp-role">
+              <div class="brief-webapp-role-letter">P</div>
+              <div class="brief-webapp-role-content">
+                <div class="brief-webapp-role-title">Participantes</div>
+                <div class="brief-webapp-role-desc">
+                  Suivez le déroulé en direct sur l'onglet Live.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (key === 'go') {
+    return `
+      <div class="brief-slide">
+        <div class="brief-go">
+          <div class="brief-kicker">C'est l'heure</div>
+          <h1>C'est parti</h1>
+          <p class="brief-go-sub">
+            Les capitaines rejoignent leur groupe. Les responsables rejoignent leur atelier.
+            L'instant commence maintenant.
+          </p>
+          <button class="brief-go-cta" data-brief-action="live">Passer à l'affichage live →</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return '';
+}
+
+// ============================================================
+// UTIL (html escaping) — placed here so render functions can use it.
+// ============================================================
+function escapeHtml(s) {
+  if (typeof s !== 'string') return '';
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+// ============================================================
+// EVENT HANDLERS (minimal — full wiring lands at step 9)
+// Covers the briefing carousel, participants calc and captain names so slides
+// 1-7 of the projection are already interactive.
+// ============================================================
+function attachEventHandlers(route) {
+  // Briefing: prev / next / jump via dot / jump to live
+  document.querySelectorAll('[data-brief-action]').forEach(btn => {
+    btn.onclick = () => {
+      const action = btn.dataset.briefAction;
+      if (action === 'next' && briefingSlide < BRIEFING_SLIDES.length - 1) {
+        briefingSlide++;
+        render();
+      } else if (action === 'prev' && briefingSlide > 0) {
+        briefingSlide--;
+        render();
+      } else if (action === 'live') {
+        location.hash = '#/live';
+      }
+    };
+  });
+  document.querySelectorAll('[data-brief-go]').forEach(btn => {
+    btn.onclick = () => { briefingSlide = parseInt(btn.dataset.briefGo, 10); render(); };
+  });
+
+  // Participants calc input (preserves focus via partial update)
+  const calcInput = document.getElementById('teams-calc-input');
+  if (calcInput) {
+    calcInput.oninput = async () => {
+      const v = parseInt(calcInput.value, 10);
+      state.participantCount = isNaN(v) ? null : v;
+      const resEl = document.getElementById('teams-calc-result');
+      if (resEl) resEl.innerHTML = renderParticipantsCalcResult(state.participantCount);
+      await saveStatePatch({ participantCount: state.participantCount });
+    };
+  }
+
+  // Captain name inputs (save on blur / Enter)
+  document.querySelectorAll('[data-captain-idx]').forEach(inp => {
+    inp.onblur = async () => {
+      const idx = parseInt(inp.dataset.captainIdx, 10);
+      const newVal = inp.value.trim();
+      if (newVal === (state.config.groups[idx].captain || '')) return;
+      state.config.groups[idx].captain = newVal;
+      await saveStatePatch({ config: state.config });
+      const card = inp.closest('.brief-captain-card');
+      if (card) card.classList.toggle('filled', !!newVal);
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') inp.blur(); };
+  });
+}
+
+// Keyboard arrows for briefing carousel
+if (!window._instantKeyboardAttached) {
+  window._instantKeyboardAttached = true;
+  document.addEventListener('keydown', (e) => {
+    if (getRoute() !== 'screen') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'ArrowRight' && briefingSlide < BRIEFING_SLIDES.length - 1) {
+      briefingSlide++; render();
+    } else if (e.key === 'ArrowLeft' && briefingSlide > 0) {
+      briefingSlide--; render();
+    }
+  });
+}
+
+// ============================================================
+// INIT (will be extended in step 9 once all render functions exist)
+// ============================================================
+(async () => {
+  await loadState();
+  render();
+})();
 </script>
 </body>
 </html>
