@@ -2899,14 +2899,15 @@ function updateTimerDisplays() {
 // ============================================================
 // SCHEDULE HELPERS
 // ============================================================
-// Returns: { atelierKey: groupId } for the current rotation (empty if not running).
-function getCurrentAssignments() {
-  if (state.currentRotation < 1 || state.currentRotation > N_ROTATIONS) return {};
-  const row = SCHEDULE[state.currentRotation - 1];
+// Returns: { atelierKey: groupId } for the given rotation number (1-indexed). Empty if out of range.
+function getAssignmentsForRotation(rotationNum) {
+  if (rotationNum < 1 || rotationNum > N_ROTATIONS) return {};
+  const row = SCHEDULE[rotationNum - 1];
   const result = {};
   ATELIERS.forEach((a, i) => { result[a.key] = row[i]; });
   return result;
 }
+function getCurrentAssignments() { return getAssignmentsForRotation(state.currentRotation); }
 
 // Returns: [groupId, groupId, ...] — N_ROTATIONS entries, one per rotation, for the given atelier.
 function getAtelierScheduleForAllRotations(atelierKey) {
