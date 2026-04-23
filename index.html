@@ -3392,14 +3392,31 @@ function renderLivePersonalStrip(myGroup) {
 
   // Idle — before the admin launches rotation 1.
   if (state.currentRotation === 0) {
+    const scheduleRows = Array.from({length: N_ROTATIONS}, (_, i) => {
+      const a = getGroupAtelierForRotation(myGroup, i + 1);
+      if (!a) return '';
+      return `
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:start;
+                    padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.12)">
+          <div style="font-family:var(--font-display);font-size:13px;font-weight:500;
+                      color:rgba(251,249,244,0.55);letter-spacing:0.05em;padding-top:2px">Rot. ${i+1}</div>
+          <div>
+            <div style="font-family:var(--font-display);font-size:17px;font-weight:500;
+                        color:var(--card);letter-spacing:-0.01em">${escapeHtml(a.name)}</div>
+            <div style="font-size:12px;color:var(--terracotta);font-style:italic;
+                        font-family:var(--font-display);margin-top:2px">→ ${escapeHtml(a.location)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
     return `
       <div class="cap-status" style="max-width:980px;margin:20px auto 0;padding:20px 24px">
-        <div class="kicker">Votre groupe</div>
-        <div class="cap-status-name" style="position:relative">${escapeHtml(groupDisplayName(g))}</div>
-        <div style="position:relative;margin-top:10px;color:rgba(251,249,244,0.85);
-                    font-size:15px;font-style:italic;font-family:var(--font-display)">
-          L'instant n'a pas encore commencé. Patientez là où vous êtes.
-        </div>
+        <div class="kicker">Votre groupe · En attente du lancement</div>
+        <div class="cap-status-name" style="position:relative;margin-bottom:16px">${escapeHtml(groupDisplayName(g))}</div>
+        <div style="font-size:10px;letter-spacing:0.25em;text-transform:uppercase;
+                    color:rgba(251,249,244,0.5);margin-bottom:8px;font-weight:500">Votre parcours</div>
+        ${scheduleRows}
         ${changeBtn}
       </div>
     `;
