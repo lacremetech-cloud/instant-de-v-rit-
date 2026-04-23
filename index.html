@@ -3550,6 +3550,209 @@ function renderLive() {
 }
 
 // ============================================================
+// ADMIN — organiser console (chrono controls + group config)
+// ============================================================
+function renderAdminLogin() {
+  return `
+    <div class="mobile-view fade-in">
+      <div class="mobile-header">
+        <div class="kicker">Accès restreint</div>
+        <h1>Console<br/><em>organisatrice</em></h1>
+      </div>
+      <div class="login-card">
+        <label class="form-label">Code d'accès</label>
+        <input type="password" id="admin-code-input" placeholder="Code organisatrice" autocomplete="off" />
+        <div class="error-msg" id="admin-error" style="display:none"></div>
+        <button class="submit-btn" data-action="admin-login">Accéder à la console</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdmin() {
+  const adminSession = (window.getSessionAdmin || getSessionAdmin)();
+  if (!adminSession) return renderAdminLogin();
+
+  const remaining = getTimerRemaining();
+  const phaseLabel =
+    state.phase === 'epreuve'    ? 'Atelier' :
+    state.phase === 'transition' ? 'Transition' : 'En attente';
+
+  const displayRot = state.currentRotation > N_ROTATIONS
+    ? N_ROTATIONS : state.currentRotation;
+
+  return `
+    <div class="admin-view fade-in">
+      <div class="admin-header">
+        <h1>Un instant <em>de vérité</em></h1>
+        <div style="text-align:right">
+          <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:var(--muted)">Rotation</div>
+          <div style="font-family:var(--font-display);font-size:32px;font-weight:500;color:var(--accent)">${displayRot}/${N_ROTATIONS}</div>
+          <div style="margin-top:6px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:${storageMode === 'supabase' ? 'var(--accent-soft)' : 'var(--terracotta)'}">
+            ${storageMode === 'supabase' ? '● Sync Supabase' : '● Mode local uniquement'}
+          </div>
+        </div>
+      </div>
+
+      <div class="admin-controls">
+        ${state.phase === 'idle' && state.currentRotation === 0 ? `
+          <button class="admin-btn primary" data-action="start">▶ Lancer la rotation 1</button>
+        ` : state.phase === 'idle' && state.currentRotation > N_ROTATIONS ? `
+          <button class="admin-btn" data-action="reset-event">Redémarrer l'événement</button>
+        ` : state.phase === 'idle' ? `
+          <button class="admin-btn primary" data-action="start">▶ Lancer rotation ${state.currentRotation + 1}</button>
+        ` : ''}
+
+        ${state.phase !== 'idle' ? `
+          ${state.timerPaused
+            ? `<button class="admin-btn primary" data-action="resume">▶ Reprendre</button>`
+            : `<button class="admin-btn" data-action="pause">⏸ Pause</button>`
+          }
+          <button class="admin-btn" data-action="skip-phase">
+            Passer à ${state.phase === 'epreuve' ? 'la transition' : 'la rotation suivante'}
+          </button>
+        ` : ''}
+
+        <button class="admin-btn" data-action="goto-screen">Ouvrir le live</button>
+        <button class="admin-btn danger" data-action="reset-all">Tout réinitialiser</button>
+      </div>
+
+      <div class="admin-grid">
+        <div class="admin-section">
+          <h2>Minuteur</h2>
+          <div class="admin-timer">
+            <div class="admin-timer-value" data-timer>${formatTime(remaining)}</div>
+            <div class="admin-timer-label">${phaseLabel}${state.timerPaused ? ' · en pause' : ''}</div>
+          </div>
+          <div class="admin-state-info">
+            <div class="admin-state-row">
+              <div class="admin-state-label">Durée atelier</div>
+              <div class="admin-state-value">35:00</div>
+            </div>
+            <div class="admin-state-row">
+              <div class="admin-state-label">Transition</div>
+              <div class="admin-state-value">5:00</div>
+            </div>
+            <div class="admin-state-row">
+              <div class="admin-state-label">Durée totale</div>
+              <div class="admin-state-value">2h40</div>
+            </div>
+          </div>
+          <div style="margin-top:16px">
+            <div class="admin-state-label" style="margin-bottom:8px">Aller directement à la rotation…</div>
+            <div class="admin-rot-buttons" style="grid-template-columns:repeat(${N_ROTATIONS}, 1fr)">
+              ${Array.from({length: N_ROTATIONS}, (_, i) => i + 1).map(r => `
+                <button class="admin-rot-btn ${r === state.currentRotation ? 'current' : ''}"
+                        data-action="goto-rot" data-rot="${r}">${r}</button>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <h2>Planning des rotations</h2>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+            Chaque groupe passe une fois dans chaque atelier. La rotation en cours est mise en valeur.
+          </div>
+          <table style="width:100%;font-size:13px;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1.5px solid var(--line)">
+                <th style="text-align:left;padding:8px 6px;font-weight:500;color:var(--muted);font-size:11px;letter-spacing:0.1em;text-transform:uppercase">Rot.</th>
+                ${ATELIERS.map(a => `<th style="padding:8px 6px;color:var(--muted);font-weight:500;text-align:center;font-size:11px;letter-spacing:0.1em;text-transform:uppercase">Atelier ${a.key}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${SCHEDULE.map((row, r) => {
+                const isCurrent = (r + 1) === state.currentRotation;
+                return `
+                  <tr style="border-bottom:1px solid var(--line);${isCurrent ? 'background:rgba(184,147,51,0.08)' : ''}">
+                    <td style="padding:10px 6px;font-family:var(--font-display);font-weight:500;${isCurrent ? 'color:var(--terracotta)' : ''}">${r+1}</td>
+                    ${row.map(gId => {
+                      const g = state.config.groups[gId];
+                      const name = g.captain ? `${gId+1} · ${escapeHtml(g.captain)}` : `Groupe ${gId+1}`;
+                      return `<td style="padding:10px 6px;text-align:center;font-size:12px;font-family:var(--font-display);font-weight:500">${name}</td>`;
+                    }).join('')}
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="admin-section" style="margin-top:24px">
+        <h2>Groupes & capitaines</h2>
+        <div class="setup-hint">
+          Les prénoms des capitaines sont visibles sur le sélecteur de groupe du live, pour aider chacune à reconnaître le sien.
+        </div>
+        <div class="admin-config">
+          <div class="admin-config-col">
+            <h3>Groupes</h3>
+            ${state.config.groups.map((g, i) => `
+              <div class="admin-config-row">
+                <span class="prefix">${i+1}</span>
+                <input class="admin-config-input" type="text" value="${escapeAttr(g.name)}"
+                       placeholder="Nom du groupe"
+                       data-config="group-name" data-idx="${i}" />
+                <input class="admin-config-input" type="text" value="${escapeAttr(g.captain || '')}"
+                       placeholder="Capitaine"
+                       data-config="group-captain" data-idx="${i}" />
+              </div>
+            `).join('')}
+          </div>
+          <div class="admin-config-col">
+            <h3>Ateliers (fixes)</h3>
+            ${ATELIERS.map(a => `
+              <div class="admin-config-row">
+                <span class="prefix">${a.key}</span>
+                <input class="admin-config-input" type="text" value="${escapeAttr(a.name)} · ${escapeAttr(a.location)}"
+                       disabled title="Défini en dur dans ATELIERS" />
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div style="margin-top:20px">
+          <button class="admin-btn" data-action="admin-logout">Se déconnecter</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================
+// CUSTOM CONFIRM & TOAST (native confirm is blocked in sandboxed iframes)
+// ============================================================
+function showConfirm(title, message, { danger = false, confirmLabel = 'Confirmer', cancelLabel = 'Annuler' } = {}) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true">
+        <h3>${escapeHtml(title)}</h3>
+        <p>${escapeHtml(message)}</p>
+        <div class="modal-actions">
+          <button class="modal-btn cancel">${escapeHtml(cancelLabel)}</button>
+          <button class="modal-btn confirm ${danger ? 'danger' : ''}">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const done = (v) => { overlay.remove(); resolve(v); };
+    overlay.querySelector('.cancel').onclick = () => done(false);
+    overlay.querySelector('.confirm').onclick = () => done(true);
+    overlay.onclick = (e) => { if (e.target === overlay) done(false); };
+  });
+}
+
+function showToast(message, duration = 2500) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+// ============================================================
 // UTIL (html escaping) — placed here so render functions can use it.
 // ============================================================
 function escapeHtml(s) {
@@ -3607,6 +3810,188 @@ function attachEventHandlers(route) {
       await saveStatePatch({ participantCount: state.participantCount });
     };
   }
+
+  // ===== ADMIN =====
+  document.querySelectorAll('[data-action="admin-login"]').forEach(btn => {
+    btn.onclick = () => {
+      const code = document.getElementById('admin-code-input').value.trim();
+      const errEl = document.getElementById('admin-error');
+      if (code !== ADMIN_CODE) {
+        errEl.textContent = 'Code incorrect.';
+        errEl.style.display = 'block';
+        return;
+      }
+      (window.setSessionAdmin || setSessionAdmin)({ ok: true });
+      render();
+    };
+  });
+  document.querySelectorAll('[data-action="admin-logout"]').forEach(btn => {
+    btn.onclick = () => { (window.setSessionAdmin || setSessionAdmin)(null); render(); };
+  });
+
+  document.querySelectorAll('[data-action="start"]').forEach(btn => {
+    btn.onclick = async () => {
+      if (state.currentRotation === 0) state.currentRotation = 1;
+      else state.currentRotation += 1;
+      state.phase = 'epreuve';
+      state.timerEnd = Date.now() + EPREUVE_DURATION * 1000;
+      state.timerPaused = false;
+      state.timerRemaining = null;
+      await saveStatePatch({
+        phase: state.phase, timerEnd: state.timerEnd,
+        timerPaused: false, timerRemaining: null,
+        currentRotation: state.currentRotation
+      });
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-action="pause"]').forEach(btn => {
+    btn.onclick = async () => {
+      state.timerRemaining = getTimerRemaining();
+      state.timerPaused = true;
+      await saveStatePatch({ timerPaused: true, timerRemaining: state.timerRemaining });
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-action="resume"]').forEach(btn => {
+    btn.onclick = async () => {
+      state.timerEnd = Date.now() + (state.timerRemaining || 0) * 1000;
+      state.timerPaused = false;
+      state.timerRemaining = null;
+      await saveStatePatch({ timerEnd: state.timerEnd, timerPaused: false, timerRemaining: null });
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-action="skip-phase"]').forEach(btn => {
+    btn.onclick = async () => {
+      const ok = await showConfirm(
+        'Passer à la phase suivante',
+        'Le minuteur va sauter immédiatement à la phase suivante. Confirmer ?',
+        { confirmLabel: 'Passer' }
+      );
+      if (!ok) return;
+      if (state.phase === 'epreuve') {
+        state.phase = 'transition';
+        state.timerEnd = Date.now() + TRANSITION_DURATION * 1000;
+        state.timerPaused = false;
+      } else if (state.phase === 'transition') {
+        if (state.currentRotation < N_ROTATIONS) {
+          state.currentRotation += 1;
+          state.phase = 'epreuve';
+          state.timerEnd = Date.now() + EPREUVE_DURATION * 1000;
+          state.timerPaused = false;
+        } else {
+          state.currentRotation = N_ROTATIONS + 1;
+          state.phase = 'idle';
+          state.timerEnd = null;
+        }
+      }
+      await saveStatePatch({
+        phase: state.phase, timerEnd: state.timerEnd,
+        timerPaused: state.timerPaused, timerRemaining: null,
+        currentRotation: state.currentRotation
+      });
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-action="goto-rot"]').forEach(btn => {
+    btn.onclick = async () => {
+      const r = parseInt(btn.dataset.rot, 10);
+      const ok = await showConfirm(
+        `Aller à la rotation ${r}`,
+        'Cela relance immédiatement le minuteur à 35:00 sur cette rotation.',
+        { confirmLabel: 'Y aller' }
+      );
+      if (!ok) return;
+      state.currentRotation = r;
+      state.phase = 'epreuve';
+      state.timerEnd = Date.now() + EPREUVE_DURATION * 1000;
+      state.timerPaused = false;
+      state.timerRemaining = null;
+      await saveStatePatch({
+        phase: state.phase, timerEnd: state.timerEnd,
+        timerPaused: false, timerRemaining: null,
+        currentRotation: state.currentRotation
+      });
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-action="goto-screen"]').forEach(btn => {
+    btn.onclick = async () => {
+      const url = window.location.origin + window.location.pathname + '#/live';
+      const w = window.open(url, '_blank');
+      if (!w || w.closed || typeof w.closed === 'undefined') {
+        try {
+          await navigator.clipboard.writeText(url);
+          showToast('URL du live copiée — collez-la dans un nouvel onglet');
+        } catch {
+          await showConfirm('Ouvrir le live', `Copiez cette URL dans un nouvel onglet :\n\n${url}`, { confirmLabel: 'OK', cancelLabel: 'Fermer' });
+        }
+      }
+    };
+  });
+
+  document.querySelectorAll('[data-action="reset-all"]').forEach(btn => {
+    btn.onclick = async () => {
+      const ok = await showConfirm(
+        'Tout réinitialiser',
+        'Le minuteur et la rotation en cours vont être effacés. Les noms de groupes et les capitaines sont conservés. Action irréversible.',
+        { danger: true, confirmLabel: 'Effacer tout' }
+      );
+      if (!ok) return;
+      state.currentRotation = 0;
+      state.phase = 'idle';
+      state.timerEnd = null;
+      state.timerPaused = false;
+      state.timerRemaining = null;
+      await saveState();
+      render();
+      showToast('Événement réinitialisé');
+    };
+  });
+
+  document.querySelectorAll('[data-action="reset-event"]').forEach(btn => {
+    btn.onclick = async () => {
+      const ok = await showConfirm(
+        "Redémarrer l'événement",
+        'Repartir de zéro (rotation 0, en attente). Confirmer ?',
+        { confirmLabel: 'Redémarrer' }
+      );
+      if (!ok) return;
+      state.currentRotation = 0;
+      state.phase = 'idle';
+      state.timerEnd = null;
+      state.timerPaused = false;
+      state.timerRemaining = null;
+      await saveState();
+      render();
+    };
+  });
+
+  // Admin config inputs
+  document.querySelectorAll('[data-config="group-name"]').forEach(inp => {
+    inp.onblur = async () => {
+      const idx = parseInt(inp.dataset.idx, 10);
+      const val = inp.value.trim() || `Groupe ${idx + 1}`;
+      if (val === state.config.groups[idx].name) return;
+      state.config.groups[idx].name = val;
+      await saveStatePatch({ config: state.config });
+    };
+  });
+  document.querySelectorAll('[data-config="group-captain"]').forEach(inp => {
+    inp.onblur = async () => {
+      const idx = parseInt(inp.dataset.idx, 10);
+      const val = inp.value.trim();
+      if (val === (state.config.groups[idx].captain || '')) return;
+      state.config.groups[idx].captain = val;
+      await saveStatePatch({ config: state.config });
+    };
+  });
 
   // "Réinitialiser" on the groups slide — wipes participant count + all captain names
   document.querySelectorAll('[data-action="reset-groups"]').forEach(btn => {
