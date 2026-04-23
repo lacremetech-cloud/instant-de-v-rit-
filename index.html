@@ -3311,10 +3311,142 @@ function renderBriefingSlide(key) {
 // Same page on the big screen and on every phone: giant timer, 4 atelier
 // cards with the currently-present group, QR for late joiners. During the
 // 5-min transition we display the NEXT rotation so groups see where to head.
-// (Personal banner + group picker are added in step 7b.)
+// A personal strip at the top lets participants pick their group and then
+// see their own next stop; the big screen simply never picks one.
 // ============================================================
+function renderLivePersonalStrip(myGroup) {
+  // Case 1 — not picked yet: render the group picker.
+  if (myGroup === null) {
+    return `
+      <div class="cap-status" style="max-width:980px;margin:20px auto 0;padding:20px 24px">
+        <div class="kicker">Suivez en direct</div>
+        <div style="font-family:var(--font-display);font-size:clamp(22px,3vw,30px);
+                    font-style:italic;color:var(--terracotta);position:relative;
+                    margin:4px 0 16px;font-weight:400;letter-spacing:-0.01em">
+          Vous êtes dans quel groupe&nbsp;?
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(${N_GROUPS},minmax(0,1fr));
+                    gap:10px;position:relative">
+          ${state.config.groups.map(g => `
+            <button data-pick-group="${g.id}"
+              style="background:rgba(251,249,244,0.08);border:1.5px solid rgba(251,249,244,0.22);
+                     color:var(--card);border-radius:12px;padding:14px 12px;cursor:pointer;
+                     transition:background 0.15s, border-color 0.15s;
+                     text-align:left;font-family:inherit">
+              <div style="font-family:var(--font-display);font-size:18px;font-weight:500;line-height:1.1">
+                ${escapeHtml(g.name)}
+              </div>
+              <div style="font-size:12px;color:var(--terracotta);font-style:italic;margin-top:4px;
+                          font-family:var(--font-display);font-weight:400;min-height:1em">
+                ${g.captain ? escapeHtml(g.captain) : '<span style="opacity:0.4">—</span>'}
+              </div>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  // Case 2 — group picked: render the personal banner.
+  const g = state.config.groups[myGroup];
+  const cur = (state.currentRotation >= 1 && state.currentRotation <= N_ROTATIONS)
+    ? getGroupAtelierForRotation(myGroup, state.currentRotation) : null;
+  const nxt = (state.currentRotation + 1 >= 1 && state.currentRotation + 1 <= N_ROTATIONS)
+    ? getGroupAtelierForRotation(myGroup, state.currentRotation + 1) : null;
+
+  const changeBtn = `
+    <button data-change-group aria-label="Changer de groupe"
+      style="position:absolute;top:14px;right:14px;background:rgba(251,249,244,0.12);
+             border:1px solid rgba(251,249,244,0.28);color:rgba(251,249,244,0.9);
+             padding:5px 12px;border-radius:999px;font-size:10px;letter-spacing:0.18em;
+             text-transform:uppercase;cursor:pointer;font-family:inherit">
+      Changer
+    </button>`;
+
+  // Idle — before the admin launches rotation 1.
+  if (state.currentRotation === 0) {
+    return `
+      <div class="cap-status" style="max-width:980px;margin:20px auto 0;padding:20px 24px">
+        <div class="kicker">Votre groupe</div>
+        <div class="cap-status-name" style="position:relative">${escapeHtml(groupDisplayName(g))}</div>
+        <div style="position:relative;margin-top:10px;color:rgba(251,249,244,0.85);
+                    font-size:15px;font-style:italic;font-family:var(--font-display)">
+          L'instant n'a pas encore commencé. Patientez là où vous êtes.
+        </div>
+        ${changeBtn}
+      </div>
+    `;
+  }
+
+  // Finished.
+  if (state.currentRotation > N_ROTATIONS) {
+    return `
+      <div class="cap-status" style="max-width:980px;margin:20px auto 0;padding:20px 24px">
+        <div class="kicker">Votre groupe</div>
+        <div class="cap-status-name" style="position:relative">${escapeHtml(groupDisplayName(g))}</div>
+        <div style="position:relative;margin-top:10px;color:rgba(251,249,244,0.85);
+                    font-size:15px;font-style:italic;font-family:var(--font-display)">
+          L'instant est terminé. Merci d'avoir été là.
+        </div>
+        ${changeBtn}
+      </div>
+    `;
+  }
+
+  // Running: show where to be now + what comes next.
+  const curLabel = state.phase === 'transition' ? 'Direction' : 'Vous êtes à';
+  return `
+    <div class="cap-status" style="max-width:980px;margin:20px auto 0;padding:20px 24px">
+      <div class="kicker" style="position:relative">
+        ${escapeHtml(groupDisplayName(g))} · Rotation ${state.currentRotation} sur ${N_ROTATIONS}
+      </div>
+      <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:28px;align-items:start;
+                  position:relative;margin-top:10px">
+        <div>
+          <div class="atelier-teams-label" style="color:rgba(251,249,244,0.55);margin-bottom:2px">${curLabel}</div>
+          ${cur ? `
+            <div style="display:flex;align-items:baseline;gap:14px;margin-top:4px">
+              <div class="cap-status-letter" style="font-size:56px;line-height:0.85">${cur.key}</div>
+              <div style="min-width:0">
+                <div class="cap-status-name" style="font-size:24px;margin-top:0">${escapeHtml(cur.name)}</div>
+                <div style="margin-top:6px;font-size:14px;color:var(--terracotta);font-style:italic;
+                            font-family:var(--font-display);font-weight:500">→ ${escapeHtml(cur.location)}</div>
+              </div>
+            </div>
+          ` : `
+            <div class="cap-status-name" style="font-size:22px;margin-top:8px">Transition</div>
+          `}
+        </div>
+        <div style="border-left:1px solid rgba(251,249,244,0.18);padding-left:24px">
+          <div class="atelier-teams-label" style="color:rgba(251,249,244,0.55);margin-bottom:2px">Ensuite</div>
+          ${nxt ? `
+            <div style="display:flex;align-items:baseline;gap:10px;margin-top:6px">
+              <div style="font-family:var(--font-display);font-size:40px;font-style:italic;
+                          color:var(--gold);line-height:0.85">${nxt.key}</div>
+              <div style="min-width:0">
+                <div style="font-family:var(--font-display);font-size:18px;font-weight:500;letter-spacing:-0.01em">
+                  ${escapeHtml(nxt.name)}
+                </div>
+                <div style="font-size:12px;color:rgba(251,249,244,0.7);font-style:italic;
+                            font-family:var(--font-display);margin-top:2px">→ ${escapeHtml(nxt.location)}</div>
+              </div>
+            </div>
+          ` : `
+            <div style="margin-top:10px;font-size:14px;color:rgba(251,249,244,0.7);
+                        font-style:italic;font-family:var(--font-display)">
+              Dernier atelier — profitez-en.
+            </div>
+          `}
+        </div>
+      </div>
+      ${changeBtn}
+    </div>
+  `;
+}
+
 function renderLive() {
   const remaining = getTimerRemaining();
+  const myGroup = getMyGroup();
 
   const phaseLabel =
     state.phase === 'epreuve'    ? 'Atelier en cours' :
@@ -3350,6 +3482,7 @@ function renderLive() {
   }
 
   return `
+    ${renderLivePersonalStrip(myGroup)}
     <div class="screen fade-in">
       <div class="screen-header">
         <div class="screen-title-block">
@@ -3369,11 +3502,22 @@ function renderLive() {
           const gId = assignments[a.key];
           const g = (gId !== undefined && gId !== null) ? state.config.groups[gId] : null;
           const hasGroup = !!g;
+          const isMine = myGroup !== null && gId === myGroup;
+          const mineStyle = isMine
+            ? 'box-shadow:0 0 0 3px var(--terracotta), 0 8px 24px rgba(14,26,51,0.18);'
+            : '';
           return `
-            <div class="atelier-card ${hasGroup ? 'highlight' : ''}">
+            <div class="atelier-card ${hasGroup ? 'highlight' : ''}" style="${mineStyle}">
               <div class="atelier-header">
                 <div class="atelier-letter">${a.key}</div>
                 <div class="atelier-name">${escapeHtml(a.name)}</div>
+                ${isMine ? `
+                  <span style="margin-left:auto;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;
+                               color:var(--terracotta);background:rgba(184,147,51,0.18);padding:4px 9px;
+                               border-radius:999px;font-weight:500;align-self:flex-start">
+                    Votre groupe
+                  </span>
+                ` : ''}
               </div>
               <div class="atelier-teams-label" style="margin-top:4px">Lieu</div>
               <div class="atelier-teams" style="font-family:var(--font-display);font-style:italic;font-weight:500">
@@ -3421,6 +3565,18 @@ function escapeAttr(s) { return escapeHtml(s); }
 // 1-7 of the projection are already interactive.
 // ============================================================
 function attachEventHandlers(route) {
+  // Live — pick or change group (stored in localStorage)
+  document.querySelectorAll('[data-pick-group]').forEach(btn => {
+    btn.onclick = () => {
+      const id = parseInt(btn.dataset.pickGroup, 10);
+      if (!isNaN(id)) setMyGroup(id);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-change-group]').forEach(btn => {
+    btn.onclick = () => { setMyGroup(null); render(); };
+  });
+
   // Briefing: prev / next / jump via dot / jump to live
   document.querySelectorAll('[data-brief-action]').forEach(btn => {
     btn.onclick = () => {
