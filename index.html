@@ -2537,6 +2537,8 @@
     .admin-rot-buttons { grid-template-columns: repeat(3, 1fr); }
   }
 </style>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -2544,5 +2546,192 @@
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Fraunces,Georgia,serif;font-style:italic;color:var(--muted);font-size:18px">Chargement…</div>
 </div>
 
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const ATELIERS = [
+  {
+    key: 1,
+    name: "L'intelligence du cœur",
+    desc: "Une vidéo qui montre que le cœur a son propre cerveau.",
+    responsible: "Ansa Soumia",
+    location: "Grande salle du haut"
+  },
+  {
+    key: 2,
+    name: "La boîte à questions",
+    desc: "Poser les vraies questions qui nous bloquent pour avancer.",
+    responsible: "Ansa Assya",
+    location: "Réfectoire"
+  },
+  {
+    key: 3,
+    name: "Story telling",
+    desc: "L'histoire de deux maîtresses qui ont fait un choix qui a donné un sens à leur vie.",
+    responsible: "Rayyan et Fatima",
+    location: "Terrasse piscine"
+  },
+  {
+    key: 4,
+    name: "Introspection",
+    desc: "Chaque fille tire une carte et répond à une question d'introspection.",
+    responsible: "Ansa Safa",
+    location: "Terrasse cuisine"
+  },
+];
+const N_GROUPS = 4;
+const N_ROTATIONS = 4;
+const EPREUVE_DURATION = 35 * 60;       // 35 min
+const TRANSITION_DURATION = 5 * 60;     // 5 min
+const ADMIN_CODE = 'ADMIN2026';
+const RESP_CODE = 'INSTANT2026';
+
+// Rotation schedule: each group visits each atelier exactly once.
+// SCHEDULE[rotationIdx][atelierIdx] = groupId
+// Cyclic shift: group at atelier a during rotation r = (a - r) mod N_GROUPS
+function buildSchedule() {
+  const sched = [];
+  for (let r = 0; r < N_ROTATIONS; r++) {
+    const row = [];
+    for (let a = 0; a < ATELIERS.length; a++) {
+      row.push((a - r + N_GROUPS) % N_GROUPS);
+    }
+    sched.push(row);
+  }
+  return sched;
+}
+const SCHEDULE = buildSchedule();
+
+// ============================================================
+// STATE (persisted via Supabase or localStorage)
+// ============================================================
+const DEFAULT_CONFIG = {
+  groups: Array.from({length: N_GROUPS}, (_, i) => ({
+    id: i,
+    name: `Groupe ${i + 1}`,
+    captain: '',
+    code: String(1000 + i * 111).slice(-4)  // 1000, 1111, 1222, 1333
+  })),
+  ateliers: ATELIERS.map(a => ({...a}))
+};
+
+function groupDisplayName(g) {
+  if (!g) return '';
+  if (g.captain && g.captain.trim()) return `${g.name} · ${g.captain.trim()}`;
+  return g.name;
+}
+
+function groupShortName(g) {
+  if (!g) return '';
+  if (g.captain && g.captain.trim()) return g.captain.trim();
+  return g.name.replace('Groupe ', 'Gr. ');
+}
+
+let state = {
+  currentRotation: 0,      // 0 = not started, 1..N_ROTATIONS = active, N_ROTATIONS+1 = finished
+  phase: 'idle',           // 'idle' | 'epreuve' | 'transition'
+  timerEnd: null,          // epoch ms when current phase ends
+  timerPaused: false,
+  timerRemaining: null,    // used when paused
+  participantCount: null,
+  config: DEFAULT_CONFIG
+};
+
+// ============================================================
+// STORAGE — Supabase (primary) + localStorage (fallback)
+// ============================================================
+const STORAGE_KEY = 'instant:state';
+let storageMode = 'local';  // 'supabase' | 'local'
+
+const _supabase = (window.INSTANT_SUPABASE_URL && window.INSTANT_SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(window.INSTANT_SUPABASE_URL, window.INSTANT_SUPABASE_ANON_KEY)
+  : null;
+
+async function loadState() {
+  if (_supabase) {
+    try {
+      const { data, error } = await _supabase
+        .from('event_state')
+        .select('data')
+        .eq('id', 1)
+        .maybeSingle();
+      if (!error && data && data.data) {
+        state = { ...state, ...data.data };
+        if (!state.config) state.config = DEFAULT_CONFIG;
+      }
+      storageMode = 'supabase';
+      return;
+    } catch(e) {
+      console.warn('Supabase unavailable, falling back to localStorage', e);
+    }
+  }
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v) {
+      const parsed = JSON.parse(v);
+      state = { ...state, ...parsed };
+      if (!state.config) state.config = DEFAULT_CONFIG;
+    }
+  } catch(e) {}
+  storageMode = 'local';
+}
+
+// Full-state overwrite — used only for intentional resets.
+async function saveState() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+  if (_supabase) {
+    const { error } = await _supabase
+      .from('event_state')
+      .upsert({ id: 1, data: state, updated_at: new Date().toISOString() });
+    storageMode = error ? 'local' : 'supabase';
+    if (error) console.error('[saveState] upsert error:', error.message);
+  }
+}
+
+// Targeted patch — updates only the provided top-level keys (timer, config, …).
+async function saveStatePatch(patch) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+  if (!_supabase) return;
+  const { error } = await _supabase.rpc('save_state_patch', { p_patch: patch });
+  if (!error) { storageMode = 'supabase'; return; }
+  await saveState();  // fallback
+}
+
+// Real-time sync: Supabase Realtime when configured, localStorage polling otherwise
+if (_supabase) {
+  _supabase
+    .channel('instant-state')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'event_state' }, (payload) => {
+      if (!payload.new || !payload.new.data) return;
+      state = { ...state, ...payload.new.data };
+      if (!state.config) state.config = DEFAULT_CONFIG;
+      const active = document.activeElement;
+      const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+      if (!isTyping && typeof render === 'function') render();
+    })
+    .subscribe();
+} else {
+  let lastStateHash = '';
+  setInterval(() => {
+    try {
+      const v = localStorage.getItem(STORAGE_KEY);
+      if (v && v !== lastStateHash) {
+        lastStateHash = v;
+        const parsed = JSON.parse(v);
+        state = { ...state, ...parsed };
+        if (!state.config) state.config = DEFAULT_CONFIG;
+        const active = document.activeElement;
+        const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+        if (!isTyping && typeof render === 'function') render();
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+// ============================================================
+// NEXT STEPS (routing, timer, render, handlers, init) will be appended below.
+// ============================================================
+</script>
 </body>
 </html>
