@@ -2730,7 +2730,202 @@ if (_supabase) {
 }
 
 // ============================================================
-// NEXT STEPS (routing, timer, render, handlers, init) will be appended below.
+// ROUTING (hash-based: #/screen, #/live, #/cap, #/resp, #/admin)
+// ============================================================
+function getRoute() {
+  const h = window.location.hash.slice(1) || '/';
+  if (h === '/' || h === '') return 'home';
+  if (h.startsWith('/screen')) return 'screen';
+  if (h.startsWith('/live'))   return 'live';
+  if (h.startsWith('/cap'))    return 'cap';
+  if (h.startsWith('/resp'))   return 'resp';
+  if (h.startsWith('/admin'))  return 'admin';
+  return 'home';
+}
+window.addEventListener('hashchange', () => { if (typeof render === 'function') render(); });
+
+// Local session (which group / atelier is this device "bound to")
+const SESSION_KEY_CAP   = 'instant:session:cap';
+const SESSION_KEY_RESP  = 'instant:session:resp';
+const SESSION_KEY_ADMIN = 'instant:session:admin';
+
+function getSessionCap()   { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_CAP)   || 'null'); } catch { return null; } }
+function setSessionCap(v)  { sessionStorage.setItem(SESSION_KEY_CAP,   JSON.stringify(v)); }
+function getSessionResp()  { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_RESP)  || 'null'); } catch { return null; } }
+function setSessionResp(v) { sessionStorage.setItem(SESSION_KEY_RESP,  JSON.stringify(v)); }
+function getSessionAdmin() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_ADMIN) || 'null'); } catch { return null; } }
+function setSessionAdmin(v){ sessionStorage.setItem(SESSION_KEY_ADMIN, JSON.stringify(v)); }
+
+// Fallback to in-memory if sessionStorage is blocked (sandboxed iframes etc.)
+let _sessCap = null, _sessResp = null, _sessAdmin = null;
+try { sessionStorage.getItem('test'); } catch {
+  window.getSessionCap   = () => _sessCap;
+  window.setSessionCap   = (v) => { _sessCap = v; };
+  window.getSessionResp  = () => _sessResp;
+  window.setSessionResp  = (v) => { _sessResp = v; };
+  window.getSessionAdmin = () => _sessAdmin;
+  window.setSessionAdmin = (v) => { _sessAdmin = v; };
+}
+
+// ============================================================
+// TIMER LOGIC
+// ============================================================
+function getTimerRemaining() {
+  if (state.phase === 'idle') return EPREUVE_DURATION;
+  if (state.timerPaused) return state.timerRemaining || 0;
+  if (!state.timerEnd) return 0;
+  return Math.max(0, Math.floor((state.timerEnd - Date.now()) / 1000));
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// ============================================================
+// AUDIO ALERT (short beep during last minute, triple chime at phase end)
+// ============================================================
+let _audioCtx = null;
+
+// Unlock AudioContext on first user interaction (browser autoplay policy)
+document.addEventListener('click',      () => { if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); else if (_audioCtx.state === 'suspended') _audioCtx.resume(); }, { once: false });
+document.addEventListener('touchstart', () => { if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); else if (_audioCtx.state === 'suspended') _audioCtx.resume(); }, { once: false });
+
+function playBeep() {
+  try {
+    if (!_audioCtx) return;
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    const osc  = _audioCtx.createOscillator();
+    const gain = _audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(_audioCtx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.2, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.2);
+    osc.start(_audioCtx.currentTime);
+    osc.stop(_audioCtx.currentTime + 0.2);
+  } catch(e) {}
+}
+
+function playEndAlarm() {
+  try {
+    if (!_audioCtx) return;
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    const t = _audioCtx.currentTime;
+    for (let ring = 0; ring < 3; ring++) {
+      const s = t + ring * 0.7;
+      const osc = _audioCtx.createOscillator();
+      const g   = _audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 920;
+      g.gain.setValueAtTime(0.3, s);
+      g.gain.exponentialRampToValueAtTime(0.001, s + 0.5);
+      osc.connect(g); g.connect(_audioCtx.destination);
+      osc.start(s); osc.stop(s + 0.55);
+    }
+  } catch(e) {}
+}
+
+// ============================================================
+// MAIN TICK — every second
+//   - On the admin device only, auto-advance the phase when the timer expires
+//     (writing timerEnd from every connected device would cause jumps).
+//   - On every route that shows a timer, refresh the display.
+// ============================================================
+setInterval(() => {
+  const route = getRoute();
+
+  if (route === 'admin' &&
+      state.phase !== 'idle' && !state.timerPaused &&
+      state.timerEnd && Date.now() >= state.timerEnd) {
+    if (state.phase === 'epreuve') {
+      playEndAlarm();
+      state.phase = 'transition';
+      state.timerEnd = Date.now() + TRANSITION_DURATION * 1000;
+      saveStatePatch({ phase: state.phase, timerEnd: state.timerEnd, timerPaused: false, currentRotation: state.currentRotation });
+    } else if (state.phase === 'transition') {
+      if (state.currentRotation < N_ROTATIONS) {
+        state.currentRotation += 1;
+        state.phase = 'epreuve';
+        state.timerEnd = Date.now() + EPREUVE_DURATION * 1000;
+      } else {
+        state.currentRotation = N_ROTATIONS + 1;
+        state.phase = 'idle';
+        state.timerEnd = null;
+      }
+      saveStatePatch({ phase: state.phase, timerEnd: state.timerEnd, timerPaused: false, timerRemaining: null, currentRotation: state.currentRotation });
+    }
+    if (typeof render === 'function') render();
+  }
+
+  if (['screen', 'cap', 'admin', 'live', 'resp'].includes(route)) {
+    updateTimerDisplays();
+  }
+}, 1000);
+
+// Also play the end-of-phase alarm on non-admin devices when Realtime pushes
+// a phase change from 'epreuve' to 'transition'.
+(function hookRealtimeAlarm() {
+  if (!_supabase) return;
+  let prevPhase = state.phase;
+  _supabase
+    .channel('instant-alarm')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'event_state' }, (payload) => {
+      const newPhase = payload?.new?.data?.phase;
+      if (prevPhase === 'epreuve' && newPhase === 'transition' && getRoute() !== 'admin') {
+        playEndAlarm();
+      }
+      prevPhase = newPhase;
+    })
+    .subscribe();
+})();
+
+function updateTimerDisplays() {
+  const remaining = getTimerRemaining();
+  const isAlert = state.phase === 'epreuve' && !state.timerPaused && remaining <= 60 && remaining > 0;
+  document.querySelectorAll('[data-timer]').forEach(el => {
+    el.textContent = formatTime(remaining);
+    el.classList.toggle('alert', isAlert);
+    el.classList.toggle('paused', !!state.timerPaused);
+  });
+  if (isAlert) playBeep();
+}
+
+// ============================================================
+// SCHEDULE HELPERS
+// ============================================================
+// Returns: { atelierKey: groupId } for the current rotation (empty if not running).
+function getCurrentAssignments() {
+  if (state.currentRotation < 1 || state.currentRotation > N_ROTATIONS) return {};
+  const row = SCHEDULE[state.currentRotation - 1];
+  const result = {};
+  ATELIERS.forEach((a, i) => { result[a.key] = row[i]; });
+  return result;
+}
+
+// Returns: [groupId, groupId, ...] — N_ROTATIONS entries, one per rotation, for the given atelier.
+function getAtelierScheduleForAllRotations(atelierKey) {
+  const atelierIdx = ATELIERS.findIndex(a => a.key === atelierKey);
+  if (atelierIdx === -1) return [];
+  const out = [];
+  for (let r = 0; r < N_ROTATIONS; r++) out.push(SCHEDULE[r][atelierIdx]);
+  return out;
+}
+
+// Returns the atelier object where the given group will be during the given rotation (1-indexed).
+function getGroupAtelierForRotation(groupId, rotationNum) {
+  if (rotationNum < 1 || rotationNum > N_ROTATIONS) return null;
+  const row = SCHEDULE[rotationNum - 1];
+  for (let i = 0; i < ATELIERS.length; i++) {
+    if (row[i] === groupId) return ATELIERS[i];
+  }
+  return null;
+}
+
+// ============================================================
+// NEXT STEPS (render, handlers, init) will be appended below.
 // ============================================================
 </script>
 </body>
