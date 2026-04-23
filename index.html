@@ -3993,7 +3993,7 @@ function attachEventHandlers(route) {
       state.timerEnd = null;
       state.timerPaused = false;
       state.timerRemaining = null;
-      await saveState();
+      await saveStatePatch({ currentRotation: 0, phase: 'idle', timerEnd: null, timerPaused: false, timerRemaining: null });
       render();
       showToast('Événement réinitialisé');
     };
@@ -4012,7 +4012,7 @@ function attachEventHandlers(route) {
       state.timerEnd = null;
       state.timerPaused = false;
       state.timerRemaining = null;
-      await saveState();
+      await saveStatePatch({ currentRotation: 0, phase: 'idle', timerEnd: null, timerPaused: false, timerRemaining: null });
       render();
     };
   });
