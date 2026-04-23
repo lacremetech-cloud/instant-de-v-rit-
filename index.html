@@ -2995,7 +2995,7 @@ function renderHome() {
         </span>
       </button>
 
-      <div class="home-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 220px));max-width:480px">
+      <div class="home-grid" style="grid-template-columns:1fr 1fr;max-width:480px;justify-items:center">
         ${secondary.map(r => `
           <button class="home-card" onclick="location.hash='${r.hash}'">
             <span class="home-card-label">${r.label}</span>
